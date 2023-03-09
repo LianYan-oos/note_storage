@@ -542,16 +542,267 @@ shh-keygen -t rsa -C 账号邮箱
 
 ![image-20230308221922491](./assets/image-20230308221922491.png)
 
-
-
-
-
-
-
 ## IDEA集成Git
+
+### 	配置Git忽略文件：	
+
+​			idea中有部分文件与实际功能无关。不能参与服务器的部署，所以需要屏蔽IDEA工具之间的差异。
+
+​			创建忽略规则文件xxxx.ignore（前缀随便起，建议是git.ignore）
+
+​			这个文件的存放位置原则上在哪里都可以，为了便于让~/.gitconfig文件引用，建议也放在用户目录下：
+
+​			git.ignor 文件模板内容如下：
+
+```git
+# Compiled class file
+*.class
+
+# Log file
+*.log
+
+# BlueJ files
+*.ctxt
+
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
+
+# Package Files #
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# virtual machine  crash  logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err pid*
+
+.classpath
+.project
+.settings
+target
+.idea
+*.iml
+```
+
+![image-20230309102310749](./assets/image-20230309102310749.png)
+
+需要在.gitconfig中引用
+
+```
+[user]
+	name = jx2693648
+	email = 346789129@qq.com
+[core]
+	excludesfile = git忽略文件绝对路径
+注意：这里要使用”正斜线（/）“，不要使用”反斜线（\）“
+```
+
+![image-20230309102758906](./assets/image-20230309102758906.png)
+
+### 	定位Git程序：
+
+![image-20230309103014029](./assets/image-20230309103014029.png)
+
+### 	初始化Git仓库：
+
+![image-20230309103310334](./assets/image-20230309103310334.png)
+
+### 	添加到暂存区：
+
+![image-20230309103539950](./assets/image-20230309103539950.png)
+
+### 	提交本地库：
+
+![image-20230309103831839](./assets/image-20230309103831839.png) 
+
+### 	切换版本：
+
+ ![image-20230309104233072](./assets/image-20230309104233072.png)
+
+### 	创建分支：
+
+![image-20230309104443408](./assets/image-20230309104443408.png)
+
+### 	切换分支：
+
+ ![image-20230309104716328](./assets/image-20230309104716328.png)
+
+### 	合并分支：
+
+  ![image-20230309104917241](./assets/image-20230309104917241.png)
+
+### 	解决冲突：
+
+![image-20230309105227937](./assets/image-20230309105227937.png)
+
+![image-20230309105409455](./assets/image-20230309105409455.png)
 
 ## IDEA集成GitHub
 
+### 	设置GitHub账号：
+
+![image-20230309105630325](./assets/image-20230309105630325.png)
+
+​			登录不上可以使用口令登录：
+
+![image-20230309105903933](./assets/image-20230309105903933.png)
+
+![adb79828fda3a15f1f18c838ab57c192](./assets/adb79828fda3a15f1f18c838ab57c192.png)
+
+
+
+![2f7579d65d1b1e80d9cef47b470e9e57](./assets/2f7579d65d1b1e80d9cef47b470e9e57.png)
+
+### 	分享工程到GitHub：
+
+ ![image-20230309111601257](./assets/image-20230309111601257.png)
+
+### 	push推送本地库到远程库：
+
+  ![image-20230309111903841](./assets/image-20230309111903841.png)
+
+注意：push是将本地库代码推送到远程库，如果本地库代码跟远程库代码版本不一致，push的操作是会被拒绝的。也就是说，要想push成功，一定要保证本地库的版本要比远程库的版本高！因此一个成熟的程序员在动手改本地代码之前，一定会先检查下远程库跟本地代码的区别！如果本地的代码版本已经落后，切记要先pul拉取一下远程库的代码，将本地代码更新到最新以后，然后再修改，提交，推送！
+
+### 	pull拉去远程库到本地：
+
+![image-20230309112446927](./assets/image-20230309112446927.png)
+
+### 	clone克隆远程库到本地：
+
+![image-20230309112705515](./assets/image-20230309112705515.png)
+
 ## 国内代码托管中心-码云
 
+### 	简介：
+
+​		众所周知，GitHub服务器在国外，使用GitHub作为项目托管网站，如果网速不好的话，严重影响使用体验，甚至会出现登录不上的情况。针对这个情况，大家也可以使用国内的项目托管网站-码云。
+
+​		码云是开源中国推出的基于Git的代码托管服务中心，网址是htps:/gitee.com/，使用方式跟GitHub一样，而且它还是一个中文网站，如果你英文不是很好它是最好的选择。
+
+### 	IDEA 集成码云：
+
+#### 			IDEA安装码云插件：
+
+​				Idea默认不带码云插件，我们第一步要安装Gitee插件。
+​				如图所示，在Idea插件商店搜索Gitee,然后点击右侧的Install按钮。
+
+![image-20230309113630612](./assets/image-20230309113630612.png)
+
+### 	码云赋值GitHub项目：
+
+​		码云提供了直接复制GtHb项目的功能，方便我们做项目的迁移和下载。具体操作如下：
+
+![image-20230309131926069](./assets/image-20230309131926069.png)
+
+
+
+![image-20230309131951983](./assets/image-20230309131951983.png)
+
+
+
+
+
+当GitHub上面有代码更新是：
+
+![image-20230309132240399](./assets/image-20230309132240399.png)
+
 ## 自建代码托管平台-GitLab
+
+### 	GitLab简介：
+
+​		GitLab是由GitLabInc.开发，使用MIT许可证的基于网络的Git仓库管理工具，且具有wiki和issue跟踪功能。使用Git作为代码管理工具，并在此基础上搭建起来的web服务。
+​		GitLab由乌克兰程序员 DmitriyZaporozhets 和 ValerySizov开发，它使用Ruby语言写成。后来，一些部分用G0语言重写。截止2018年5月，该公司约有290名团队成员，以及2000多名开源贡献者。GitLab被IBM，Sony，JuilichResearchCenter，NASA,Alibaba，Invincea，O'ReillyMedia，
+
+Leibniz-Rechenzentrum(LRZ)，CERN，SpaceX等组织使用。
+
+### 	GitLab官网地址：
+
+​				官网地址：https://about.gitlab.com/
+
+​				安装说明：https://gitlab.cn/install/
+
+### 	GitLab安装：
+
+#### 		服务器准备：
+
+​			准备一个系统为CentOS7以上版本的服务器，要求内存4G,磁盘50G。关闭防火墙，并且配置好主机名和P,保证服务器可以上网。
+
+#### 		安装包准备：
+
+​			um在线安装gitlab-ce时，需要下载几百M的安装文件，非常耗时，所以最好提前把所需RPM包下载到本地，然后使用离线pm的方式安装。
+下载地址：
+
+```
+https://packages.gitlab.com/gitlab/gitlab-ce/packages/el/7/gitlab-ce-13.10.2-ce.0.el7.x86_64.rpm
+```
+
+#### 		编写安装脚本：
+
+```
+# vim gitlab-install.sh
+
+# 安装包位置
+sudo rpm -ivh /opt/module/gitlab-ce-13.10.2-ce.0.e17.x86_64.rpm
+
+sudo yum install -y curl policycoreutils-python openssh-server cronie
+
+sudo lokkit -s http -s sshe
+
+sudo yum install -y postfixe
+
+sudo service postfix starte
+
+sudo chkconfig postfix ond
+
+curl https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.rpm.sh sudo bash
+
+sudo EXTERNAL_URL="http://gitlab.example.com" yum -y install gitlab-ced
+```
+
+给脚本添加权限
+
+```
+chmod +x gitlab-install.sh
+
+# 执行脚本
+#  ./gitlab-install.sh
+```
+
+#### 		初始化GitLab服务：
+
+​				执行以下命令初始化GitLab服务
+
+```
+#  gitlab-ctl reconfigure
+```
+
+#### 		启动GitLab服务：
+
+​				执行以下命令启动GitLab服务，如果停止，执行gitlab-ctl   stop
+
+```
+# gitlab-ctl start
+```
+
+#### 		使用浏览器访问GitLab：
+
+​				使用主机名或者IP地址即可访问GitLab服务。需要提前配以下windows的hosts文件。
+
+![image-20230309141736516](./assets/image-20230309141736516.png)
+
+#### 		GitLab创建远程仓库：
+
+ 			首次登录需要给root账号修改密码，并且要符合规则![image-20230309142155575](./assets/image-20230309142155575.png)
+
+![image-20230309142309181](./assets/image-20230309142309181.png)
+
+![image-20230309142426973](./assets/image-20230309142426973.png)
+
+![image-20230309142451693](./assets/image-20230309142451693.png)
+
+#### 		IDEA集成GitLab：
+
+​				安装GitLab插件：
