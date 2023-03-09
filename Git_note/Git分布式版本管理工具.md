@@ -806,3 +806,7 @@ chmod +x gitlab-install.sh
 #### 		IDEA集成GitLab：
 
 ​				安装GitLab插件：
+
+![image-20230309142727908](./assets/image-20230309142727908.png)
+
+![image-20230309142859485](./assets/image-20230309142859485.png)
