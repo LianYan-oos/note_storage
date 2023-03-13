@@ -1150,6 +1150,272 @@ MySQL索引数据结构对经典的B+Tree进行了优化。在原B+Tree的基础
 
 #### 以下那条SQL 执行效率高：
 
+```sql
+SELECT * FROM user WHERE id ='10'
+
+SELECT * FROM user WHERE name='Arm'
+
+备注：id为主键，name字段创建的有索引
 ```
 
+#### 思考：InnoDB主键索引的B+Tree高度为多高？
+
+提出假设：
+
+​	一行数据大小为1k，一页中可以存储16行这样的数据。InnoDB的指针占用6个字节空间，（key）主键即使为bigint，占用8个字节。
+
+高度为2
+
+ n * 8+（n+1）* 6 = 16（k）* 1024（byte）算出n约为1170
+
+### 索引语法：
+
+-   创建索引
+
+    ```sql
+    CREATE [UNIQUE | FULLTEXT] INDEX index_name ON table_name (index_col_name,...);
+    
+    # ... 
+    代表一个索引可以关联多个字段（称为：联合索引，组合索引）
+    一个索引只关联一个字段（称为：单列索引）
+    
+    # index_name 规则  idx为（index 缩写）
+    idx_表名_字段名
+    ```
+
+-   查看索引
+
+    ```sql
+    SHOW INDEX FROM table_name;
+    
+    SHOW INDEXES FROM table_name;
+    
+    SHOW KEYS FROM table_name;
+    ```
+
+-   删除索引
+
+    ```sql
+    DROP INDEX index_name ON table_name;
+    ```
+
+### SQL性能分析
+
+#### 	SQL执行频率
+
+​	MySQL客户端连接成功后，通过 SHOW [ SESSION | GLOBAL] STATUS 命令可以提供服务器状态信息，通过指令，可以查看当前数据库的INSERT，UPDATE，DELETE，SELECT 的访问频率；
+
+```sql
+# SESSION 当前会话  GLOBAL 全局状态
+SHOW GLOBAL STATUS LIKE 'Com%';
+#或者
+SHOW GLOBAL STATUS LIKE 'Com_______';
 ```
+
+#### 	慢查询日志：
+
+慢查询日志记录了所有执行时间超过指定参数（Long_query_time，单位：秒，默认10秒）的所有SQL语句日志。
+
+MySQL的慢查询日志默认没有开启，需要在MySQL的配置文件（/eetc/my.cnf）中配置如下信息：
+
+```sql
+#查看慢日志开启情况
+SHOW VARIABLES LIKE 'slow_query_log';
+
+#开启MySQL慢日志查询开关
+slow_query_log=1
+#设置慢日志的时间为2秒，SQL语句执行时间查过2秒，就会视为慢查询，记录慢查询日志
+log_query_time=2
+```
+
+配置完毕之后，通过以下指令重启MySQL服务进行测试，查看慢日志文件中记录的信息/var/lib/mysql/localhost-slow.log
+
+#### 	PROFILE详情：
+
+SHOW PROFILES 能够在做SQL优化时帮助我们了解事件都耗在那里去了。通过HAVE_PROFILING参数，能够看到当前MySQL是否支持
+
+PROFILE操作：
+
+```sql
+SELECT @@HAVE_PROFILING;
+```
+
+默认PROFILING是关闭的，可以通过set语句在SESSION / GLOBAL 级别开启PROFILING：
+
+```sql
+#查看开启状态 0 关闭  1 开启
+SELECT @@PROFILING;
+
+#开启开关
+SET PROFILING = 1;
+
+#查看每一条SQL的耗时基本情况
+SHOW PROFILES;
+#查看指定query_id的SQL语句哥哥极端的好事状况
+SHOW PROFILE FOR QUERY query_id;
+#查看指定query_id的SQL语句CPU的使用情况
+SHOW PROFILE CPU FOR QUERY query_id;
+```
+
+#### 	EXPLAIN执行计划：
+
+EXPLAN 或者 DESC 命令获取MySQL如何执行 SELECT 语句的信息，包括在SELECT语句执行过程中表如何连接和连接顺序。
+
+语法：
+
+```sql
+#直接在 SELECT 语句之前加上关键字 EXPLAIN / DESC
+EXPLAIN SELECT 字段列表 FROM 表名 WHERE 条件;
+DESC SELECT 字段列表 FROM 表名 WHERE 条件;
+```
+
+查询出来的所有列
+
+![image-20230313100012322](./assets/image-20230313100012322.png)
+
+##### 	EXPLAIN执行计划的个字段含义：
+
+1.  id
+    1.  SELECT查询的序列号，表示查询中执行select子句或者是操作表的顺序(d相同，执行顺序从上到下；id不同，值逗大，题先执行)。
+2.  select_type
+    1.  SIMPLE：表示不需要[union](https://so.csdn.net/so/search?q=union&spm=1001.2101.3001.7020)操作或者不包含子查询的简单select查询。有连接查询时，外层的查询为simple，且只有一个
+    2.  PRIMARY：一个需要union操作或者含有[子查询](https://so.csdn.net/so/search?q=子查询&spm=1001.2101.3001.7020)的select，位于最外层的单位查询的select_type即为primary。且只有一个
+    3.  UNION：union连接的两个select查询，第一个查询是dervied派生表，除了第一个表外，第二个以后的表select_type都是union
+    4.  DEPENDENT UNION：与union一样，出现在union 或union all语句中，但是这个查询要受到外部查询的影响
+    5.  UNION RESULT：包含union的结果集，在union和union all语句中,因为它不需要参与查询，所以id字段为null
+    6.  SUBQUERY：除了from字句中包含的子查询外，其他地方出现的子查询都可能是subquery
+    7.  DEPENDENT SUBQUERY：与dependent union类似，表示这个subquery的查询要受到外部表查询的影响
+    8.  DERIVED：from字句中出现的子查询，也叫做派生表，其他数据库中可能叫做内联视图或嵌套select
+3.  table
+    1.  显示的查询表名，如果查询使用了别名，那么这里显示的是别名，如果不涉及对数据表的操作，那么这显示为null，如果显示为尖括号括起来的就表示这个是临时表，后边的N就是执行计划中的id，表示结果来自于这个查询产生。如果是尖括号括起来的，与类似，也是一个临时表，表示这个结果来自于union查询的id为M,N的结果集。
+4.  $\textcolor{red}{type}$
+    1.  依次从好到差：null，system，const，eq_ref，ref，fulltext，ref_or_null，unique_subquery，index_subquery，range，index_merge，index，all，除了all之外，其他的type都可以使用到索引，除了index_merge之外，其他的type只可以用到一个索引
+        1.  NULL：不查询表的时候出现
+        2.  SYSTEM：表中只有一行数据或者是空表，且只能用于myisam和memory表。如果是Innodb引擎表，type列在这个情况通常都是all或者index
+        3.  CONST：使用唯一索引或者主键，返回记录一定是1行记录的等值where条件时，通常type是const。其他数据库也叫做唯一索引扫描
+        4.  EQ_REF：出现在要连接过个表的查询计划中，驱动表只返回一行数据，且这行数据是第二个表的主键或者唯一索引，且必须为not null，唯一索引和主键是多列时，只有所有的列都用作比较时才会出现eq_ref
+        5.  REF：不像eq_ref那样要求连接顺序，也没有主键和唯一索引的要求，只要使用相等条件检索时就可能出现，常见与辅助索引的等值查找。或者多列主键、唯一索引中，使用第一个列之外的列作为等值查找也会出现，总之，返回数据不唯一的等值查找就可能出现。
+        6.  FULLTEXT：全文索引检索，要注意，全文索引的优先级很高，若全文索引和普通索引同时存在时，mysql不管代价，优先选择使用全文索引
+        7.  REF_OR_NULL：与ref方法类似，只是增加了null值的比较。实际用的不多。
+        8.  UNIQUE_SUBQUERY：用于where中的in形式子查询，子查询返回不重复值唯一值
+        9.  INDEX_SUBQUERY：用于in形式子查询使用到了辅助索引或者in常数列表，子查询可能返回重复值，可以使用索引将子查询去重。
+        10.  索引范围扫描，常见于使用>
+        11.  INDEX_MERGE：表示查询使用了两个以上的索引，最后取交集或者并集，常见and ，or的条件使用了不同的索引，官方排序这个在ref_or_null之后，但是实际上由于要读取所个索引，性能可能大部分时间都不如range
+        12.  INDEX：索引全表扫描，把索引从头到尾扫一遍，常见于使用索引列就可以处理不需要读取数据文件的查询、可以使用索引排序或者分组的查询
+        13.  ALL：这个就是全表扫描数据文件，然后再在server层进行过滤返回符合要求的记录。
+5.  possible_keys
+    1.  查询可能使用到的索引都会在这里列出来
+6.  $\textcolor{red}{key}$
+    1.  查询真正使用到的索引，select_type为index_merge时，这里可能出现两个以上的索引，其他的select_type这里只会出现一个
+7.  key_len
+    1.  用于处理查询的索引长度，如果是单列索引，那就整个索引长度算进去，如果是多列索引，那么查询不一定都能使用到所有的列，具体使用到了多少个列的索引，这里就会计算进去，没有使用到的列，这里不会计算进去。留意下这个列的值，算一下你的多列索引总长度就知道有没有使用到所有的列了。要注意，mysql的ICP特性使用到的索引不会计入其中。另外，key_len只计算where条件用到的索引长度，而排序和分组就算用到了索引，也不会计算到key_len中。
+8.  ref
+    1.  如果是使用的常数等值查询，这里会显示const，如果是连接查询，被驱动表的执行计划这里会显示驱动表的关联字段，如果是条件使用了表达式或者函数，或者条件列发生了内部隐式转换，这里可能显示为func
+9.  rows
+    1.  这里是执行计划中估算的扫描行数，不是精确值
+10.  $\textcolor{red}{extra}$
+     1.  DISTINCT：在select部分使用了distinc关键字
+     2.  NO TABLES USED：不带from字句的查询或者From dual查询
+     3.  使用not in()形式子查询或not exists运算符的连接查询，这种叫做反连接。即，一般连接查询是先查询内表，再查询外表，反连接就是先查询外表，再查询内表。
+     4.  USING FILESORT：排序时无法使用到索引时，就会出现这个。常见于order by和group by语句中
+     5.  USING INDEX：查询时不需要回表查询，直接通过索引就可以获取查询的数据。
+     6.  USING JOIN BUFFER(block nested loop)，USING JOIN BUFFER(batched key accss)：5.6.x之后的版本优化关联查询的BNL，BKA特性。主要是减少内表的循环数量以及比较顺序地扫描查询。
+     7.  using sort_union，using_union，using intersect，using sort_intersection：
+         1.  USING INTERSECT：表示使用and的各个索引的条件时，该信息表示是从处理结果获取交集
+         2.  USING UNION：表示使用or连接各个使用索引的条件时，该信息表示从处理结果获取并集
+         3.  USING SORT_UNION和USING SORT_INTERSECTION：与前面两个对应的类似，只是他们是出现在用and和or查询信息量大时，先查询主键，然后进行排序合并后，才能读取记录并返回。
+     8.  USING TEMPORARY：表示使用了临时表存储中间结果。临时表可以是内存临时表和磁盘临时表，执行计划中看不出来，需要查看status变量，used_tmp_table，used_tmp_disk_table才能看出来。
+     9.  USING WHERE：表示存储引擎返回的记录并不是所有的都满足查询条件，需要在server层进行过滤。查询条件中分为限制条件和检查条件，5.6之前，存储引擎只能根据限制条件扫描数据并返回，然后server层根据检查条件进行过滤再返回真正符合查询的数据。5.6.x之后支持ICP特性，可以把检查条件也下推到存储引擎层，不符合检查条件和限制条件的数据，直接不读取，这样就大大减少了存储引擎扫描的记录数量。extra列显示using index condition
+     10.  FIRSTMATCH(tb_name)：5.6.x开始引入的优化子查询的新特性之一，常见于where字句含有in()类型的子查询。如果内表的数据量比较大，就可能出现这个
+     11.  LOOSESCAN(m..n)：5.6.x之后引入的优化子查询的新特性之一，在in()类型的子查询中，子查询返回的可能有重复记录时，就可能出现这个
+     12.  除了这些之外，还有很多查询数据字典库，执行计划过程中就发现不可能存在结果的一些提示信息
+11.  filtered
+     1.  使用explain extended时会出现这个列，5.7之后的版本默认就有这个字段，不需要使用explain extended了。这个字段表示存储引擎返回的数据在server层过滤后，剩下多少满足查询的记录数量的比例，注意是百分比，不是具体记录数。
+
+### 索引的使用：
+
+验证索引的效率
+
+​	在大数据的表中进行查询 ，查看执行效率，然后在表中建立索引进行查询，查看sql执行的时间
+
+-   最左前缀法则
+
+    -   如果索引了多列（联合索引），要遵守最左前缀法则。最左前缀法则指的是查询从索引的最左列开始，并且不跳过索引中的列如果跳跃某一列，$\textcolor{red}{索引将部分失效（后面的字段索引失效）}$
+
+-   范围查询
+
+    -   联合索引中，出现范围查询（>,<），范围查询右侧列索引失效
+    -   在业务的允许下进行使用 >= 或者 <= 可以规避范围查询索引失效
+
+-   索引列运算
+
+-   -   不要在索引列上进行运算操作，$\textcolor{red}{索引将失效}$
+
+-   字符串不加引号
+
+    -   字符串类型字段使用时，不加引号，索引将会失效。
+
+-   模糊查询
+
+    -   如果仅仅是尾部模糊匹配，索引不会失效。如果是头部模糊匹配，索引失效
+
+-   or连接的条件
+
+    -   用or分割开的条件，如果or前的条件中的列有索引，而后面的列中没有索引，那么涉及的索引都不会被用到（只有两侧都有索引的时候索引才会生效）
+    -   由于or分开的某一个字段没有索引，索引即使另一个字段有索引，索引也会失效。所以需要针对没有索引的字段建立索引
+
+-   数据分布影响
+
+    -   如果MySQL评估使用索引比全表更慢，则不使用索引（会走全表扫描）。
+    -   比方说 IS NULL 和  IS NOT NULL 是否走索引是根据表中的数据的分布进行判定是否走索引
+
+-   SQL提示
+
+    -   SQL提示，是优化数据库的一个重要手段，简单来说，就是在SQL语句中加入一些认为的提示来达到优化操作的目的
+
+        -   use index(告诉数据库使用指定索引，只是相当于给MySQL 一个建议)：
+
+        ```sql
+        SELECT [列表字段] FROM 表名 USE INDEX(指定索引名称) WHERE 查询条件
+        
+        # 查看执行情况
+        EXPLAIN SELECT [列表字段] FROM 表名 USE INDEX(指定索引名称) WHERE 查询条件
+        ```
+
+        -   ignore index(告诉数据库不要使用指定索引)：
+
+        ```sql
+        SELECT [列表字段] FROM 表名 IGNORE INDEX(指定索引名称) WHERE 查询条件
+        
+        # 查看执行情况
+        EXPLAIN SELECT [列表字段] FROM 表名 IGNORE INDEX(指定索引名称) WHERE 查询条件
+        ```
+
+        -   force index(告诉数据库必须使用指定索引)：
+
+        ```sql
+        SELECT [列表字段] FROM 表名 FORCE INDEX(指定索引名称) WHERE 查询条件
+        
+        # 查看执行情况
+        EXPLAIN SELECT [列表字段] FROM 表名 FORCE INDEX(指定索引名称) WHERE 查询条件
+        ```
+
+-   覆盖索引
+
+    -   尽量使用覆盖索引（查询使用了索引，并且需要返回的列，在该索引中已经全部能够找到），减少 SELECT *
+    -   需要去查看执行计划的额外信息Extra（根据使用的MySQL版本进行变更，无确定值）
+
+```
+using index condition：查找了索引，但是需要回表查询数据（性能比下面的低）
+using where ， using index：查找使用了索引，但是需要的数据都在索引列中能找到。索引不需要徽标查询数据
+```
+
+通过主键索引查询所有数据（SELECT * 很容易回表查询 相对较慢 除非创建了所有字段的联合索引）
+
+通过聚集索引查询到二级索引的值  二级索引下面存储的就是一级索引（形成覆盖索引）
+
+![image-20230313102836423](./assets/image-20230313102836423.png)
+
+-   -   
+
+-   -   
