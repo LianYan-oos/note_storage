@@ -2363,3 +2363,140 @@ SELECT fun1(100);
 ​	对于MySQL 8版本及以上 默认 binary logging （二进制制）是默认开启的，一旦开启就会要求当前存储函数的特性的添加
 
 ####  触发器：
+
+介绍：
+
+​	触发器是与表有关的数据库对象，指在 insert/update/delete 之前或之后，触发并执行触发器中定义的SQL语句集合，触发器的这个特性可以协助应用在数据库端确保数据的完整性，日志记录，数据校验等操作。
+
+​	使用别名OLD和 NEW 来引用触发器中发生变化的记录内容，这与其他数据库是相似的。现在触发器还只支持行级触发，不支持语句级触发。
+
+行级触发器：数据发生变化受影响的行数会被触发  影响多少行 触发多少次
+
+语句级触发器：数据发生变化时 执行语句进行触发  不管影响多少行 一句SQL只会触发一次
+
+| 触发器类型      | NEW  和 OLD                                          |
+| --------------- | ---------------------------------------------------- |
+| INSERT 型触发器 | NEW 表示将要或者已经新增的数据                       |
+| UPDATE 型触发器 | OLD 表示修改之前的数据，NEW 表将要或已经修改后的数据 |
+| DELETE 型触发器 | OLD 表示将要或者已经删除的数据                       |
+
+语法：
+
+​	创建语法：
+
+```sql
+CREATE TRIGGER trigger_name(触发器名称)
+    BEFORE(之前)/AFTER(之后)
+    INSERT/UPDATE/DELETE -- 类型
+    ON table_name -- 表名
+    FOR EACH ROW -- 行级触发器
+    BEGIN
+        trigger_stmt  -- 执行的SQL
+    END;
+```
+
+查看语法：
+
+```sql
+ SHOW TRIGGERS -- 查看当前数据库的所有触发器
+```
+
+删除指定的触发器：
+
+```sql
+DROP TRIGGER [schema_name(数据库名称).]trigger_name(触发器名称)  -- 如果没有指定 schema_name，默认当前数据库
+```
+
+示例：
+
+```sql
+CREATE TABLE IF NOT EXISTS user_logs(
+    id int(11) NOT NULL AUTO_INCREMENT,
+    operation VARCHAR(20) NOT NULL COMMENT '操作类型，insert/update/delete',
+    operate_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+    operate_id VARCHAR(50) NOT NULL COMMENT '操作ID',
+    operate_params VARCHAR(500) COMMENT '操作参数',
+    primary key (id)
+) engine= innodb default charset = utf8 COMMENT '测试日志表';
+
+
+# 创建insert触发器
+CREATE TRIGGER tb_user_insert_trigger
+    AFTER INSERT
+    ON sys_user
+    FOR EACH ROW
+BEGIN
+    insert into user_logs(id, operation, operate_time, operate_id, operate_params)
+        VALUES (null,'insert',NOW(),NEW.uuid,
+                CONCAT('插入的内容为：id=',NEW.uuid,',name=',NEW.user_name,',phone=',NEW.cellphone));
+END;
+
+#查看触发器
+SHOW TRIGGERS;
+
+# 删除指定触发器
+DROP TRIGGER tb_user_insert_trigger;
+
+#创建update 触发器
+CREATE TRIGGER tb_user_update_trigger
+    AFTER UPDATE ON sys_user
+    FOR EACH ROW
+BEGIN
+    INSERT INTO user_logs(id, operation, operate_time, operate_id, operate_params)
+        VALUES (null,'update',NOW(),NEW.uuid,
+                CONCAT('更新前的内容为：id=',OLD.uuid,',name=',OLD.user_name,',phone=',OLD.cellphone,
+                    '更新后的内容为：id=',NEW.uuid,',name=',NEW.user_name,',phone=',NEW.cellphone));
+END;
+
+#查看触发器
+SHOW TRIGGERS;
+
+# 删除指定触发器
+DROP TRIGGER tb_user_update_trigger;
+
+#创建delete触发器
+CREATE TRIGGER tb_user_delete_trigger
+    AFTER DELETE ON sys_user
+    FOR EACH ROW
+    BEGIN
+        INSERT INTO user_logs(id, operation, operate_time, operate_id, operate_params)
+        VALUES (null,'delete',NOW(),OLD.uuid,
+                CONCAT('删除前的内容为：id=',OLD.uuid,',name=',OLD.user_name,',phone=',OLD.cellphone));
+    END;
+    
+#查看触发器
+SHOW TRIGGERS;
+
+# 删除指定触发器
+DROP TRIGGER tb_user_delete_trigger;
+```
+
+### 锁：
+
+介绍：
+
+​	锁是计算机协调多个进程或者线程并发访问某一个资源的机制。在数据库中，除传统的计算机资源（CPU，RAM，I/O）的争用以外，数据也是一种供许多用户共享的资源。如何保证数据并发访问的一致性，有效性是所有数据库必须解决的一个问题，锁冲突也是影响数据库并发访问性能的一个重要因素。从这个角度说，锁对数据库而言显得尤其重要，也更复杂。
+
+分类：
+
+​	MySQL中的锁，按照锁的粒度分，分为以下三类：
+
+1.  全局锁：锁定数据库中的所有表
+2.  表级锁：每次操作锁住整张表
+3.  行级锁：每次操作所著对应的行数据
+
+全局锁：
+
+​	介绍：
+
+全局锁就是对整个数据库实例加锁，枷锁之后整个实力就处于只读状态，后续的DML的写语句，DDL语句，已经更新操作事务提交语句都将被阻塞。
+
+其典型的使用场景是做全库的逻辑备份，对所有的表进行锁定，从而获取一致性视图，保证数据的完整性。
+
+$\textcolor{red}{不加全局锁的情况，业务正在执行在对表进行操作，会导致添加数据以备份数据不一致}$
+
+![image-20230314164814760](./assets/image-20230314164814760.png)
+
+添加全局锁：
+
+![image-20230314164824801](./assets/image-20230314164824801.png)
