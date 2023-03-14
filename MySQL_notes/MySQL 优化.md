@@ -1554,3 +1554,812 @@ $\textcolor{red}{主键乱序插入}$
 ![image-20230313135337339](./assets/image-20230313135337339.png)
 
 ![image-20230313135341109](./assets/image-20230313135341109.png)
+
+#### 页合并
+
+当删除一行记录时，实际上记录并没有被物理删除，只是记录被标记（flaged）为删除并且它的空间变得允许被其他记录声明使用。
+
+当页中删除的记录达到MERGE_THRESHOLD（默认为页的50%），InnoDB会开始寻找最新的页（前或后）看看是否可以将两个页合并以优化空间使用。
+
+![image-20230314094449500](./assets/image-20230314094449500.png)
+
+当到50%的时候回去找前面的页是否能合并，不能则会去找后面的页合并。
+
+![image-20230314094501420](./assets/image-20230314094501420.png)
+
+MERGE_THRESHOLD：合并页的阈值，可以自己设置，在创建表或者创建索引时指定。
+
+#### 主键设计原则
+
+满足业务 需求的情况下，尽量降低主键的长度（$\textcolor{red}{二级索引底下挂的是主键，如果主键长度过高则会占用大量的磁盘空间，在搜索的}$$\textcolor{red}{时候会占用大量的磁盘IO}$）
+
+插入数据时，尽量选择顺序插入，选择使用AUTO_INCREMENT自增主键（$\textcolor{red}{避免页分裂的情况}$）
+
+尽量不要使用UUID做主键或者是其他自然主键，如身份证号。（$\textcolor{red}{属于无序的主键，会产生页分裂情况，长度也会相对比较长，会占}$$\textcolor{red}{用磁盘空间，搜索的时候占用大量的IO}$）
+
+业务操作时，避免对主键的修改。（$\textcolor{red}{修改主键会去修改对应的索引结构}$）
+
+![image-20230314095030632](./assets/image-20230314095030632.png)
+
+### ORDER BY（排序）优化：
+
+Using filesort：通过表的索引或全表扫描，读取满足条件的数据行，然后在排序缓冲区sort buffer中完成排序操作，所有不是通过索引直接返回排序结果的排序都叫FileSort排序。
+
+Using index：通过有序索引顺序扫描直接返回有序数据，这种情况即为using index，不需要额外排序，操作效率高。
+
+```sql
+#没有创建索引时，根据age，phone进行排序（Using filesort）
+SELECT id,age,phone FROM tb_user ORDER BY age,phone;
+
+#创建联合索引
+CREATE INDEX idx_user_age_phone ON tb_user(age,phone);
+
+#创建索引后，根据age，phone进行升序排序（Using index）
+SELECT id,age,phone FROM tb_user ORDER BY age,phone;
+
+#创建索引后，根据age，phone进行降序排序（Using index）
+SELECT id,age,phone FROM tb_user ORDER BY age DESC,phone DESC;
+
+#根据age，phone进行排序，一个升序排序，一个降序排序（Using filesort）
+SELECT id,age,phone FROM tb_user ORDER BY age DESC,phone DESC;
+
+#创建联合索引
+CREATE INDEX idx_user_age_phone ON tb_user(age ASC,phone DESC);
+
+#根据age，phone进行排序，一个升序排序，一个降序排序（Using index）
+SELECT id,age,phone FROM tb_user ORDER BY age DESC,phone DESC;
+```
+
+页子节点的数据结构（前提是使用覆盖索引）
+
+![image-20230314095313363](./assets/image-20230314095313363.png)
+
+#### 优化规则：
+
+根据排序字段建立合适的索引，多字段排序时，也遵循最左前缀法则
+
+尽量使用覆盖索引
+
+多字段排序，一个升序一个降序，此时需要注意联合索引在创建的规则（ASC/DESC）
+
+如果不可避免的出现filesort，大数据量排序时，可以适当的增大排序缓冲区大小sort_buffer_size(默认大小256k，如果占满了会在此磁盘中进行排序，性能就会降低)
+
+```sql
+#查看命令
+SHOW VARIABLES LIKE 'sort_buffer_size';
+
+#sort_buffer_size 是一个connection级参数，在每个connection需要buffer的时候，一次性分配的内存。
+#sort_buffer_size 并不是越大越好，过大的设置+高并发可能会耗尽系统内存资源。
+
+
+#设置命令
+SET [GLOBAL | SESSION] sort_buffer_size = 1024*1024;
+#设置完毕之后需要重启MySQL才能永久生效
+```
+
+![image-20230314095443291](./assets/image-20230314095443291.png)
+
+### GROUP BY 优化：
+
+```sql
+#执行分组操作，根据 某列 分组（Using filesort）
+EXPLAIN SELECT 分组列明,COUNT(*) FROM 表名 GROUP BY 分组列名
+
+#创建索引
+CREATE INDEX idx_user_age_sta ON 表名(联合索引列名)
+
+#执行分组操作，根据 某列 进行分组(Using index)
+EXPLAIN SELECT 分组列明,COUNT(*) FROM 表名 GROUP BY 分组列名(联合索引字段1)
+
+#执行分组操作，根据 某列 分组(Using index)
+EXPLAIN SELECT 分组列明,COUNT(*) FROM 表名 GROUP BY 分组列名(联合索引字段1),联合索引字段2
+
+#执行分组操作，根据 某列 分组(Using index)
+EXPLAIN SELECT 分组列名,COUNT(*) FROM 表名 WHERE 联合索引字段1 = 条件  GROUP BY 联合索引字段2
+```
+
+在分组操作时，可以通过索引来提高效率
+
+分组操作时，索引的使用也是满足最左前缀法则的。
+
+### LIMIT优化：
+
+一个常见有头疼的问题就是 LIMIT 2000000,10 ，此时需要MySQL排序前2000010记录，仅仅返回2000000 - 2000010的记录，其他记录丢弃，查询排序代价非常大。
+
+优化思路：一般分页查询时，通过创建覆盖索引能够比较好的提高性能，可以通过覆盖索引加子查询形式进行优化
+
+### COUNT 优化：
+
+MyISAM：引擎会把一个表的总行数存在磁盘上，因此执行COUNT(*)的时候会直接返回这个数，效率高。
+
+InnoDB：引擎就麻烦了，他执行COUNT(*)的时候，需要把数据一行一行地从引擎里面读出来，然后累积计数。
+
+优化思路：
+
+​	使用缓存数据库将数据缓存一下 ，增加数据的时候去给缓存数据库+1 删除的时候-1。
+
+​	COUNT()是一个聚合函数，对于返回的结果集，一行行地判断，如果COUNT函数的参数不是NULL，累计值加1，否则不加，最后返回累计值。
+
+​	用法：COUNT(*)，COUNT(主键)，COUNT(字段)，COUNT（1）
+
+COUNT(主键)
+
+​	InnoDB引擎会遍历整张表，把每一行的主键id值都取出来，返回给服务层，服务层拿到主键后，直接按行进行累加（主键不可能为NULL）。
+
+COUNT(字段)
+
+​	没有NOT NULL约束：InnoDB引擎会遍历整张表把每一行的字段 都取出来，返回给服务层，服务层判断是否为NULL，不为NULL，计数累加
+
+​	有NOT NULL约束：InnoDB引擎会遍历整张表把每一行的字段值都取出来，返回给服务层，直接按行进行累加
+
+COUNT(1)：
+
+​	InnoDB引擎会遍历整张表，但不取值，服务层对于返回的每一行，放一个数字"1"进去，直接按行进行累加
+
+COUNT(*)：
+
+​	InnoDB引擎并不会把全部字段取出来，而是专门做了优化，不取值，服务层直接按行进行累加。
+
+按照效率排序，COUNT(字段)<COUNT(主键)<COUNT(1) ≈ COUNT()，索引尽量使用COUNT(*)。
+
+### UPDATE优化：
+
+```sql
+UPDATE student SET no = '2000000000' WHERE id = 1;
+
+UPDATE student SET no = '2000000000' WHERE name = '韦一笑';
+```
+
+$\textcolor{red}{InnoDB的行锁是针对索引加的锁，并不是针对记录加的锁，并且该索引不能失效，否则会从行锁升级为表锁，降低并发性能。}$
+
+### 视图/存储过程/触发器：
+
+#### 	视图：
+
+视图（View）是一种虚拟存在的表。视图中的数据并不存在数据库中实际存在，行和列数据来自定义视图的查询中使用的表，并且是在使用视图时动态生成的。
+
+通俗的讲，视图只保存了查询的SQL逻辑，不保存查询结果。所以我们在创建视图的时候，只要的工作就落在创建这条SQL查询语句上。
+
+##### 	创建：
+
+```sql
+#创建视图语法
+CREATE [OR REPLACE] VIEW 视图名称[(列明列表)] AS SELECT 语句[ WITH [ CASCADED | LOCAL ] CHECK OPTION]
+
+#例
+CREATE OR REPLACE VIEW sku_v1 AS SELECT id,sn,name FROM tb_sku WHERE id < 10;
+```
+
+查询：
+
+```sql
+#查看创建视图语句：
+SHOW CREATE VIEW 视图名称
+#例
+SHOW CREATE VIEW sku_v1;
+
+#查看视图数据：
+SELECT * FROM 视图名称
+#例
+SELECT * FROM sku_v1 where id = 1;
+```
+
+修改：
+
+```sql
+#方式一
+CREATE [OR REPLACE] VIEW 视图名称[(列名列表)] AS SELECT 语句[ WITH [ CASCADED | LOCAL ] CHECK OPTION]
+#例
+CREATE OR REPLACE VIEW sku_v1 AS SELECT id,sn,name,num FROM tb_sku WHERE id <= 10;
+
+#方式二
+ALTER VIEW 视图名称[(列名列表)] AS SELECT 语句[ WITH [ CASCADED | LOCAL ] CHECK OPTION]
+#例
+ALTER VIEW sku_v1 AS SELECT id,sn,name FROM tb_sku WHERE id <= 10;
+```
+
+删除：
+
+```sql
+DROP VIEW [IF EXISTS] 视图名称 [,视图名称]...
+#例
+DROP VIEW sku_v1;
+```
+
+##### 视图的检查选项
+
+​	当使用WITH CHECK OPTION子句创建视图时，MySQL会通过视图检查正在更改的每个行，例如插入，更新，删除，一使其符合视图的定义。MySQL允许基于另一个视图创建视图，他还会检查依赖视图中的规则以保持一致性。为了确定检查的范围，MySQL提供了两个选项：
+
+CASCADED 和 LOCAL，默认值 CASCADED
+
+CASCADED：
+
+​	第一种情况：
+
+![image-20230314100904934](./assets/image-20230314100904934.png)
+
+​	第二种情况：
+
+​		不会去检查v3视图  会去检查v2视图 满足v2和v1 视图的所有条件才会添加成功
+
+![image-20230314100925367](./assets/image-20230314100925367.png)
+
+LOCAL：
+
+​	向v3 视图插入数据 不会检查v3 的约束 v3基于v2 会进行v2的条件约束  v2基于v1 但是v1 没有检查约束 所以不会去满足v1 条件  （不对条件做检查）
+
+​	当我们操作视图的时候会递归的去寻找当前视图依赖的视图，如果当前视图以及依赖的视图有检查约束，将回去判定我们操作的数据是否满足条件满足添加不满足报错，如果在递归的寻找的时候有一个视图没有增加检查约束，此时在操作数据的时候不会对当前条件进行检查
+
+![image-20230314100959313](./assets/image-20230314100959313.png)
+
+##### 视图更新：
+
+​	要使视图可更新，视图中的行与基础表中的行之间必须存在一对一的关系。如果视图包含以下任何一项，则该视图不可更新：
+
+1.  聚合函数或窗口函数（SUM()，MIN()，MAX()，COUNT()等）
+2.  DISTINCT
+3.  GROUP BY
+4.  HAVING
+5.  UNION 或者 UNION ALL
+
+##### 视图的作用：
+
+简单：
+
+​	视图不仅可以简化用户对数据的理解，也可以简化他们的操作。那些被经常使用的查询可以被定义为视图，从而使得用户不必为以后的操作每次指定全部的条件
+
+安全：
+
+​	数据库可以授权，但不能授权到数据库特定行和特定的列上，通过视图用户只能查询和修改他们所能见到的数据
+
+数据独立：
+
+​	视图可以帮助用户屏蔽真是表结构变化带来的影响。
+
+#### 存储过程：
+
+存储过程是事先经过编译并存储在数据库中的一段SQL 语句集合，调用存储过程可以简化开发人员的很多工作，减少数据在数据库的应用服务之间的传输，对于提高数据处理的效率有好处的。
+
+存储过程思想上很简单，就是数据库SQL 语言层面的代码封装与重用。
+
+![image-20230314101858505](./assets/image-20230314101858505.png)
+
+##### （存储过程）特点：
+
+封装，复用
+
+可以接收参数，也可以返回数据
+
+减少网络交互，效率提升
+
+##### 创建存储过程：
+
+```sql
+CREATE PROCEDURE 存储过程名称([参数列表]) 
+BEGIN 
+     -- SQL 语句
+END;
+```
+
+##### 调用存储过程：
+
+```sql
+CALL 名称([参数])
+```
+
+##### 查看存储过程：
+
+```sql
+SELECT * FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = '数据库名称'; --查询指定数据库的存储过程及信息
+SHOW CREATE PROCEDURE 存储过程名称; -- 查询某个存储过程的定义
+
+# 查询会出现参数  definer = root@`%`  是创建用户   不指定为当前用户
+```
+
+##### 删除存储过程：
+
+```sql
+DROP PROCEDURE [IF EXISTS] 存储过程名称;
+```
+
+$\textcolor{red}{注意：在命令行中，执行创建存储过程的SQL时，需要通过关键字DELIMITER 指定SQL语句的结束符。}$
+
+##### 变量：
+
+$\textcolor{red}{系统变量}$是MySQL服务提供，不是用户定义的，属于服务器层面，分为全局变量($\textcolor{red}{GLOBAL}$)，会话变量($\textcolor{red}{SESSION}$)
+
+查看系统变量：(不指定默认是SESSION 级别的)
+
+```sql
+SHOW [SESSION | GLOBAL ] VARIABLES; -- 查看所有系统变量
+SHOW [SESSION | GLOBAL ] VARIABLES LIKE '....' -- 可以通过Like模糊查询方式查找变量
+SELECT @@[SESSION | GLOBAL ] 系统变量; -- 查看指定变量值
+
+#例子：
+SELECT @@GLOBAL.autocommit;
+```
+
+设置系统变量：(不指定默认是SESSION 级别的)
+
+```sql
+SET [SESSION | GLOBAL ] 系统变量名 = 值;
+SET @@[SESSION | GLOBAL ] 系统变量名 = 值;
+```
+
+$\textcolor{red}{注意：}$
+
+​	$\textcolor{red}{如果没有指定SESSION/GLOBAL , 默认是SESSION，会话变量。}$
+
+​	$\textcolor{red}{MySQL服务重新启动之后，所设置的全局参数会失效，要想不失效，可以在/etc/my.cnf配置}$
+
+$\textcolor{red}{用户定义变量}$是用户根据需要自己定义的变量，用户变量不用提前声明，在用的时候直接用"@变量名" 使用就可以，其作用域为当前连接。
+
+赋值：
+
+```sql
+SET @var_name = expr[,@var_name = expr]...；
+SET @var_name := expr[,@var_name := expr]...；
+
+SELECT @var_name := expr[, @var_name := expr]..；
+SELECT 字段名 INTO @var_name FROM 表名;
+```
+
+使用：
+
+```sql
+SELECT @var_name;
+```
+
+$\textcolor{red}{注意：}$
+
+​	$\textcolor{red}{用户自定义的变量无需对其进行声明或者初始化，只不过获取到的值为NULL}$
+
+$\textcolor{red}{局部变量}$是根据需要定义的在局部生效的变量，访问之前，需要DECLARE声明。可以用作存储过程内的局部变量和输入参数，局部变量的范围是在其内声明的BEGIN...END块。
+
+声明：
+
+```sql
+DECLARE 变量名称 变量类型[DEFAULT....]
+```
+
+变量类型就是数据库字段类型：INT，BIGINT，CHAR，VARCHAR，DATE，TIME等
+
+赋值：
+
+```sql
+SET 变量名 = 值;
+SET 变量名 :=值;
+SELECT 字段名 INTO 变量名 FROM 表名.....;
+```
+
+（存储过程）if 条件判断：
+
+语法：
+
+```sql
+IF 条件1 THEN
+    .....
+ELSEIF 条件2 THEN  -- 可选
+    ........
+ELSE -- 可选
+    .......
+END IF;
+
+# 例子
+CREATE PROCEDURE P1()
+BEGIN
+    DECLARE score INT DEFAULT 0;
+    SET score := 80;
+    IF score >= 80 THEN
+        SELECT '优秀';
+    ELSEIF score >=60 AND score < 85 THEN
+        SELECT '及格';
+    ELSE
+        SELECT '不及格';
+    END IF;
+END;
+```
+
+（存储过程）参数：
+
+| 类型  | 含义                                         | 备注 |
+| ----- | -------------------------------------------- | ---- |
+| IN    | 该类参数作为输入，也就是需要调用时传入的值   | 默认 |
+| OUT   | 该类参数作为输出，也就是改参数可以作为返回值 |      |
+| INOUT | 既可以作为输入参数，又可以作为输出参数       |      |
+
+语法：
+
+```sql
+CREATE PROCEDURE 存储过程名([IN / OUT / INOUT 参数名  参数类型])
+BEGIN
+   --- SQL 语句
+END;
+
+#例1：
+CREATE PROCEDURE P1(IN score INT,OUT result VARCHAR(100))
+BEGIN
+    IF score >=85 THEN
+        SET result := '优秀';
+    ELSEIF score >=60 THEN
+        SET result := '及格';
+    ELSE
+        SET result := '不及格';
+    END IF;
+END;
+# 执行
+CALL P1(20,@result);
+# 查询
+SELECT @result;
+
+# 例2：
+CREATE PROCEDURE p1(INOUT score DOUBLE)
+    BEGIN
+     SET score := score*0.5;
+END;
+# 赋值用户变量
+SET @result := 198 ;
+#使用
+CALL P1(@result);
+#查询
+SELECT @result;
+```
+
+(存储过程)CASE：
+
+​	语法1：
+
+```sql
+CASE case_value
+    WHEN when_value1 
+        THEN  --SQL 语句 
+    [WHEN when_value2 
+        THEN  --SQL 语句]
+END CASE;
+```
+
+​	语法2：
+
+```sql
+CASE
+    WHEN search_condition1
+        THEN  --SQL 语句
+    [WHEN search_condition2 
+        THEN  --SQL 语句]
+END CASE;
+
+#例子：
+
+CREATE PROCEDURE P1(IN mouth INT,OUT result VARCHAR(100))
+    BEGIN
+        CASE
+            WHEN mouth >=1 AND mouth <=3
+                THEN
+                    SET result := '第一季度';
+            WHEN mouth >=4 AND mouth <=6
+                THEN
+                    SET result := '第二季度';
+            WHEN mouth >=7 AND mouth <=9
+                THEN
+                    SET result := '第三季度';
+            WHEN mouth >=10 AND mouth <=12
+                THEN 
+                    SET result := '第四季度';
+            ELSE
+                SET result :='请输入正确月份';
+        END CASE;
+END;
+
+CALL P1(1,@result);
+SELECT @result;
+```
+
+（存储过程）WHILE 
+
+​	while 循环时有条件的循环控制语句。满足条件后，再执行循环体中的SQL语句。具体语法为：
+
+```sql
+# 先判定条件，如果条件为true，则执行逻辑，否则，不执行逻辑
+WHILE 条件 DO
+    -- SQL 逻辑
+END WHILE;
+
+#例子：
+CREATE PROCEDURE P1(IN num INT)
+    BEGIN
+        DECLARE result INT DEFAULT 0;
+        WHILE num > 0
+            DO
+                SET result := result+num;
+                SET num := num - 1;
+            END WHILE;
+        SELECT result;
+END;
+
+CALL P1(5);
+```
+
+（存储过程）repeat
+
+​	repeat 是有条件的循环控制语句，当满足条件的时候退出循环。具体语法为：
+
+```sql
+# 先执行一次逻辑。然后判定逻辑是否满足，如果满足则退出，如果不满足，则继续下一次循环
+REPEAT
+    -- SQL 逻辑
+    UNTIL 条件
+END REPEAT;
+
+#例子：
+CREATE PROCEDURE P1(IN num INT)
+BEGIN
+    DECLARE result INT DEFAULT 0;
+    REPEAT
+        SET result := result + num;
+        SET num := num - 1;
+    UNTIL num <= 0
+        END REPEAT;
+    SELECT result;
+END;
+
+CALL P1(10);
+```
+
+(存储过程)loop
+
+​	loop 实现简单的循环，如果不在SQL逻辑中增加退出循环的条件，可以用其他来实现简单的死循环。LOOP可以配合一下两个语句使用:
+
+-   LEAVE：配合循环使用，退出循环
+-   ITERATE：必须用在循环中，作用跳过当前循环剩下的语句，直接进入下一次循环。
+
+```sql
+[begin_label:] LOOP
+    SQL 逻辑
+END LOOP [end_label];
+
+LEAVE label; -- 退出指定标记的循环体
+ITERATE label; -- 直接进入下一次循环
+
+#例子：LEAVE
+
+CREATE PROCEDURE P1(IN num INT)
+BEGIN
+    DECLARE total INT DEFAULT 0;
+
+    number:LOOP
+        IF num <=0 THEN
+            LEAVE number;
+        END IF;
+
+        SET total := total+num;
+        SET num := num -1;
+
+    END LOOP number;
+    SELECT total;
+END;
+
+CALL P1(10);
+
+
+#例子：ITERATE
+CREATE PROCEDURE getP(IN n INT)
+BEGIN
+    DECLARE total INT DEFAULT 0;
+
+    sum:LOOP
+
+        IF n <=0 THEN
+            LEAVE sum;
+        END IF;
+
+        IF n % 2 = 1 THEN
+            SET n := n -1;
+            ITERATE sum;
+        END IF;
+
+        SET total:= total+n;
+        SET n := n -1;
+
+    END LOOP sum;
+
+    SELECT total;
+END;
+
+CALL getP(100);
+```
+
+（存储过程）游标（又称：光标）
+
+​	$\textcolor{red}{游标（CURSOR）}$是用来存储查询结果集的数据类型，在存储过程和函数中可以使用游标对结果集进行循环处理，游标的使用包括游标的声明，OPEN，FETCH和CLOSE，其语法分别如下：
+
+声明游标：
+
+```sql
+DECLARE 游标名称 CURSOR FOR 查询语句;
+```
+
+打开游标：
+
+```sql
+OPEN 游标名称;
+```
+
+获取游标记录：
+
+```sql
+FETCH 游标名称 INTO 变量[,变量]
+```
+
+关闭游标：
+
+```sql
+CLOSE 游标名称;
+```
+
+示例：
+
+```sql
+CREATE PROCEDURE P11(IN uage INT)
+BEGIN
+    #游标和局部变量是有先后顺序的  先声明变量 在 声明游标
+    DECLARE uname VARCHAR(100);
+    DECLARE unameid VARCHAR(100);
+    # 定义游标  将查询的结果集存储在游标中
+    DECLARE u_cursor CURSOR FOR SELECT user_name,user_name_id FROM sys_user WHERE age <= uage;
+    #删除表
+    DROP TABLE IF EXISTS tb_user_pro;
+    #创建表
+    CREATE TABLE IF NOT EXISTS tb_user_pro(
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(100) COMMENT '姓名',
+        name_id VARCHAR(100) COMMENT '账号'
+    )COMMENT '用户数据';
+    #开启游标
+    OPEN u_cursor;
+    #获取游标记录
+    WHILE true DO
+        #获取游标记录
+        FETCH u_cursor INTO uname,unameid;
+        #将获取到的数据动态添加到表中
+        INSERT INTO tb_user_pro VALUES (NULL,uname,unameid);
+        END WHILE;
+    #关闭游标
+    CLOSE u_cursor;
+END;
+
+CALL P11(20);
+#调用是会报错 因为循环没有退出条件  一直循环 游标中没有数据 获取游标报错 
+```
+
+条件处理程序：
+
+​	条件处理程序（Handler）可以用来定义在流程控制结构执行过程中遇到问题时相应的处理步骤。具体语法为：
+
+```sql
+DECLARE handler_action HANDLER FOR condition_value [,condition_value] .... statement;
+
+handler_action
+    CONTINUE: 继续执行当前程序
+    EXIT: 终止执行当前程序
+
+condition_value
+    SQLSTATE sqlstate_value: 状态码，如02000
+    SQLWARNING: 所有以01开头的SQLSTATE代码的简写
+    NOTFOUND: 所有以02开头的SQLSTATE代码的简写
+    SQLEXCEPTION: 所有没有被SQLWARNING或NOTFOUND捕获的SQLSTATE代码的简写
+```
+
+解决上面例子的问题：
+
+```sql
+CREATE PROCEDURE P11(IN uage INT)
+BEGIN
+    -- 游标和局部变量是有先后顺序的  先声明变量 在 声明游标
+    DECLARE uname VARCHAR(100);
+    DECLARE unameid VARCHAR(100);
+    -- 定义游标  将查询的结果集存储在游标中
+    DECLARE u_cursor CURSOR FOR SELECT user_name,user_name_id FROM sys_user WHERE age <= uage;
+
+    -- 声明条件处理程序  满足sql状态码为02000 退出 关闭游标
+    DECLARE EXIT HANDLER FOR SQLSTATE '02000' CLOSE u_cursor;
+
+    -- 删除表
+    DROP TABLE IF EXISTS tb_user_pro;
+    -- 创建表
+    CREATE TABLE IF NOT EXISTS tb_user_pro(
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(100) COMMENT '姓名',
+        name_id VARCHAR(100) COMMENT '账号'
+    )COMMENT '用户数据';
+    -- 开启游标
+    OPEN u_cursor;
+    -- 获取游标记录
+    WHILE true DO
+        -- 获取游标记录
+        FETCH u_cursor INTO uname,unameid;
+        -- 将获取到的数据动态添加到表中
+        INSERT INTO tb_user_pro VALUES (NULL,uname,unameid);
+        END WHILE;
+    -- 关闭游标
+    CLOSE u_cursor;
+END;
+# 调用数据
+CALL P11(20);
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#例2：
+CREATE PROCEDURE P12(IN uage INT)
+BEGIN
+
+    DECLARE uname VARCHAR(100);
+    DECLARE unameid VARCHAR(100);
+
+    DECLARE u_cursor CURSOR FOR SELECT user_name,user_name_id FROM sys_user WHERE age <= uage;
+
+    DECLARE EXIT HANDLER FOR NOT FOUND CLOSE u_cursor;
+
+    DROP TABLE IF EXISTS tb_user_pro;
+
+    CREATE TABLE IF NOT EXISTS tb_user_pro(
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(100) COMMENT '姓名',
+        name_id VARCHAR(100) COMMENT '账号'
+    )COMMENT '用户数据';
+
+    OPEN u_cursor;
+
+    WHILE true DO
+
+        FETCH u_cursor INTO uname,unameid;
+
+        INSERT INTO tb_user_pro VALUES (NULL,uname,unameid);
+        END WHILE;
+
+    CLOSE u_cursor;
+END;
+```
+
+​	状态码可以查看官网：https://dev.mysql.com/doc/mysql-errors/8.0/en/server-error-reference.html
+
+#### 存储函数：
+
+存储函数是有返回值的存储过程，存储函数的参数只能是IN类型的。具体语法如下：
+
+```sql
+CREATE FUNCTION 存储函数名称([参数列表])
+RETURNS TYPE [characteristic....]
+BEGIN
+    --SQL语句
+    RETURN .....
+END;
+
+characteristic说明：
+    DETERMINISTIC: 相同的输入参数总是产生相同的结果
+    NO SQL: 不包含SQL语句
+    READS SQL DATA : 包含读取数据的语句，但不包含写入数据的语句
+```
+
+例子：
+
+```sql
+CREATE FUNCTION fun1(n int)
+RETURNS int DETERMINISTIC
+BEGIN
+    DECLARE num INT DEFAULT 0;
+
+    WHILE n > 0 DO
+            SET num := num+n;
+            SET n :=n-1;
+        END WHILE;
+    RETURN num;
+END;
+#调用函数
+SELECT fun1(100);
+```
+
+![image-20230314105121377](./assets/image-20230314105121377.png)
+
+​	对于MySQL 8版本及以上 默认 binary logging （二进制制）是默认开启的，一旦开启就会要求当前存储函数的特性的添加
+
+####  触发器：
