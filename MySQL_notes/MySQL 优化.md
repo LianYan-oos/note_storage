@@ -2500,3 +2500,20 @@ $\textcolor{red}{不加全局锁的情况，业务正在执行在对表进行操
 添加全局锁：
 
 ![image-20230314164824801](./assets/image-20230314164824801.png)
+
+```sql
+# 开启全局锁
+FLUSH TABLES WITH READ LOCK ;
+
+# 执行数据库备份  当前命令是MySQL 提供的插件 静止MySQL语句行中写入
+mysqldump -uroot -p1234 database_name > 文件目录:database.sql
+# 如果是服务器则需要加入ip地址
+mysqldump -h 192.168.0.0 -uroot -p1234 database_name > 文件目录:database.sql
+
+# 关闭全局锁
+UNLOCK TABLES ;
+```
+
+特点：
+
+​	数据库中加全局锁，是一个比较重的操作，存在以下问题：
