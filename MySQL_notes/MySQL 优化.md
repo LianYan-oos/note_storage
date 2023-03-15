@@ -2485,7 +2485,7 @@ DROP TRIGGER tb_user_delete_trigger;
 2.  表级锁：每次操作锁住整张表
 3.  行级锁：每次操作所著对应的行数据
 
-全局锁：
+#### 全局锁：
 
 ​	介绍：
 
@@ -2517,3 +2517,274 @@ UNLOCK TABLES ;
 特点：
 
 ​	数据库中加全局锁，是一个比较重的操作，存在以下问题：
+
+1. 如果在主库上备份，那么在备份期间都不能执行更新，业务基本上处于停摆状态。
+2. 如果在从库上备份，那么在备份期间从库不能执行主库同步过来的二进制日志（binlog），会导致主从延迟
+
+在innodb 引擎中，我们可以在备份时加上参数  --single-transaction 参数类完成不加锁的一致性数据备份：
+
+```sql
+#  此方法发不需要加全局锁
+
+# 执行数据库备份  当前命令是MySQL 提供的插件 静止MySQL语句行中写入
+mysqldump --single-transaction -uroot -p1234 database_name > 文件目录:database.sql
+# 如果是服务器则需要加入ip地址
+mysqldump --single-transaction -h 192.168.0.0 -uroot -p1234 database_name > 文件目录:database.sql
+```
+
+#### 表级锁：
+
+​	表级锁，每次操作锁住整张表。锁定粒度大，发生锁冲突的概率最高，并发度最低。应用在MyISAM，InnoDB，DBD等存储引擎中。
+
+对于表级锁，主要分为以下三类：
+
+1. 表锁
+2. 元数据锁（meta data lock，MDL）
+3. 意向锁
+
+##### 表锁：
+
+​	对于表锁，分为两类：
+
+1. 表共享读锁（read lock）
+2. 表共享读锁（read lock）
+
+语法：
+
+```sql
+加锁：lock tables 表名.... read/write  （可以一次锁多张表）
+释放锁：unlock tables /客户端断开连接
+```
+
+读锁：不会阻塞其他客户端的读操作，但是会阻塞其他客户端的写操作
+
+![image-20230315211415761](./assets/image-20230315211415761.png)
+
+示例：
+
+```sql
+# 客户端1
+LOCK TABLES sys_user read ;
+
+SELECT * FROM sys_user;
+
+UPDATE sys_user SET creator = '马海兵' WHERE uuid = '04FFDA871956401E84FF29ABD0881184';
+
+UNLOCK TABLES;
+
+
+#客户端2
+SELECT * FROM sys_user;
+
+UPDATE sys_user SET creator = '马海兵' WHERE uuid = '04FFDA871956401E84FF29ABD0881184';
+```
+
+开启表读锁：客户端2处于阻塞状态
+
+![image-20230315212351287](./assets/image-20230315212351287.png)解开读锁：客户端2 SQL 执行成功
+
+![image-20230315212404112](./assets/image-20230315212404112.png)
+
+写锁：当前客户端可以进行读操作，也可以进行写操作，其他客户端则进行阻塞状态
+
+![image-20230315212423607](./assets/image-20230315212423607.png)
+
+第一个客户端和第二个客户端开启写锁的区别
+
+​	进行查询操作：
+
+![image-20230315212436956](./assets/image-20230315212436956.png)
+
+​	进行修改操作：也是会进行阻塞状态
+
+![image-20230315212445155](./assets/image-20230315212445155.png)
+
+##### 元数据锁（meta data lock, MDL）（可以理解为：表的结构）
+
+​	MDL 加锁过程时系统自动控制，无需显示使用，在访问每一张表的时候会自动加上。MDL 锁主要作用是维护表元数据的数据一致性，在表上有活动事务的时候，不可以对元数据进行写入操作。为了避免DML与DDL冲突，保证读写的正确性。
+
+​	在MySQL5.5中引入了MDL，当对一张表进行增删改的时候，加MDL读锁（共享）；当对表结构进行变更操作的时候，加MDL 写锁（排他）
+
+| 对应SQL                                       | 锁类型                                  | 说明                                            |
+| --------------------------------------------- | --------------------------------------- | ----------------------------------------------- |
+| lock tables xxx read / write                  | SHARED_READ_ONLY / SHARED_NO_READ_WRITE |                                                 |
+| select,select....lock in share mode           | SHARED_READ                             | 与SHARED_READ,SHARED_WRITE兼容，与EXCLUSIVE互斥 |
+| insert，update，delete，select.....for update | SHARED_WRITE                            | 与SHARED_READ,SHARED_WRITE兼容，与EXCLUSIVE互斥 |
+| alter  table....                              | EXCLUSIVE                               | 与其他的MDL都互斥                               |
+
+​	演示元数据锁 读锁，写锁，互斥锁
+
+​	（客户端1进行读是会加入读锁，此时客户端2修改表结构是阻塞，当客户端1提交事务才会释放读锁，客户端2才会修改成功）
+
+![image-20230315212834662](./assets/image-20230315212834662.png)
+
+​	查看元数据锁：
+
+​		（MySQL 中 performance_schema 参数需要手动开启，MyQSL8.0以后默认开启）
+
+```sql
+#查看performance_schema参数是否开启  on 开启  off关闭
+SHOW VARIABLES LIKE 'performance_schema'
+
+#开启锁监控  须在配置文件my.cnf 或者 my.ini  配置完毕进行重启
+performance_schema = ON
+performance_schema_instrument = '%lock%=on'
+
+SELECT OBJECT_TYPE,OBJECT_SCHEMA,OBJECT_NAME,LOCK_TYPE,LOCK_DURATION FROM performance_schema.metadata_locks
+```
+
+##### 意向锁：
+
+​		为了避免DML在执行时，加的行锁与表锁的冲突，在InnoDB中引入了意向锁，使得表锁不用检查每行数据是否枷锁，使用意向锁来减少表锁的检查。
+
+​		(并发访问时客户端1 进修修改表中数据，mysql 默认会调加行锁，客户端2需要对表进行表锁，则会去扫描整张表是否有行锁，会造成性能降低)
+
+![image-20230315212931123](./assets/image-20230315212931123.png)
+
+​		（当客户端1进行修改数据时，mysql会默认添加行锁，此时给整张表添加意向锁，当客户端2进行添加表锁时，会检查意向锁的情况，判断是否能进行添加表锁操作，当前意向锁和客户端2进行的操作时兼容的则会进行表锁，如果是互斥的则会等待客户端1操作完毕之后进行表锁）
+
+![image-20230315212941917](./assets/image-20230315212941917.png)
+
+​	意向锁分为两种：
+
+1. 意向共享锁（IS）：由语句SELECT .... LOCK IN SHARE MODE 添加
+2. 意向排他锁（IX）：有 INSERT,UPDATE,DELETE,SELECT...FOR UPDATE 添加
+
+​	意向共享锁和意向排他锁的兼容性：
+
+1. 意向共享锁（IS）：与表锁共享锁（read）兼容，与表锁排他锁（write）互斥。
+2. 意向排他锁（IX）：与表锁共享锁（read）及排他锁（write）都互斥。意向锁之间不会互斥。
+
+可以通过以下SQL，查看意向锁及行锁
+
+```sql
+#MySQL 8 以前的版本
+SELECT lock_mode,lock_index,LOCK_TYPE,LOCK_DATA FROM information_schema.INNODB_LOCKS;
+
+#MySQL 8 版本
+SELECT OBJECT_SCHEMA,OBJECT_NAME,INDEX_NAME,LOCK_TYPE,LOCK_DATA FROM performance_schema.data_locks;
+```
+
+![image-20230315213309586](./assets/image-20230315213309586.png)
+
+##### 行级锁：
+
+​		行级锁，每次操作锁住对应的行数据。锁定粒度最小，发生锁冲突概览最低，并发度最高。应用在InnoDB存储引擎中。
+
+​	InnoDB的数据是基于索引组织的，行锁是通过对索引的索引项加锁来实现的，而不是对记录加的锁。对于行级锁，主要分为以下三类：
+
+1. ​	行锁（Record Lock）：锁定单个行记录的锁，防止其他事务对此行进行UPDATE和DELETE。在RC（Read Committed），RR（Repeatable Read）隔离级别下都支持
+
+    ![image-20230315213616124](./assets/image-20230315213616124.png)
+
+2. 间隙锁（Gap Lock）：锁定索引记录间隙（不含该记录），确保索引记录间隙不变，防止其他事务在这个间隙进行insert，产生幻读。在RR隔离级别下支持
+
+    ![image-20230315213623169](./assets/image-20230315213623169.png)
+
+3. 临键锁（Next-Key Lock）：行锁和间隙锁组合，同时锁住数据，并锁住数据前面的间隙Gap。在RR隔离级别下支持![image-20230315213547957](./assets/image-20230315213547957.png)
+
+InnoDB实现了以下两种类型的行锁：
+
+1. 共享锁（S）：允许一个事务去读一行，阻止其他事务获得相同数据集的排他锁。
+2. 排他锁（X）：允许获取排他锁的事务更新数据，阻止其他事务获得相同数据集的共享锁和排他锁
+
+| 当前锁类型    \      请求锁类型 | S（共享锁） | X（排他锁） |
+| ------------------------------- | ----------- | ----------- |
+| S（共享锁）                     | 兼容        | 冲突        |
+| X（排他锁）                     | 冲突        | 冲突        |
+
+​	基本SQL 加的锁
+
+| SQL                         | 行锁类型   | 说明                                     |
+| --------------------------- | ---------- | ---------------------------------------- |
+| INSERT...                   | 排他锁     | 自动加锁                                 |
+| UPDATE...                   | 排他锁     | 自动加锁                                 |
+| DELETE...                   | 排他锁     | 自动加锁                                 |
+| SELECT（正常）...           | 不加任何锁 |                                          |
+| SELECT...LOCK IN SHARE MODE | 共享锁     | 需要手动在SELECT之后加LOCK IN SHARE MODE |
+| SELECT...FOR UPDATE         | 排他锁     | 需要手动在SELECT之后加 FOR UPDATE        |
+
+#### 行锁：
+
+​	默认情况下，InnoDB在REPEATABLE READ事务隔离级别下运行，InnoDB使用next-key锁进行搜索和索引扫描，以防止幻读。
+
+1. 针对唯一索引进行检索时，对已存在的记录进行等值匹配时，将自动优化为行锁
+2. InnoDB的行锁是针对于索引加的锁，不通过索引条件检索数据，那么InnoDB将对表中所有记录加锁，此时就会升级为表锁
+
+间隙锁/临建锁：
+
+​	默认情况下，InnoDB 在 REPEATABLE READ 事务隔离级别下运行，InnoDB 使用 next-key 锁进行搜索和索引扫描，以防止幻读。
+
+1.  索引上的等值查询（唯一索引），给不存在的记录加锁时，优化为间隙锁。
+2.  索引上的等值查询（普通索引），向右遍历时最后一个值不满足查询需求时， next-key lock 退化为间隙锁
+3.  索引上的范围查询（唯一索引）-- 会访问到不满足条件的第一个值为止。(临建锁)
+
+$\textcolor{red}{注意：间隙锁唯一目的是防止其他事务插入间隙。间隙锁可以共存，一个事务采用的间隙锁不会阻止另一个事务在同一间隙上采用间隙锁}$
+
+## InnoDB引擎：
+
+### 逻辑存储结构
+
+![image-20230315214429076](./assets/image-20230315214429076.png)
+
+表空间（ibd文件），一个mysql实力可以对应多个表空间，用于存储记录，索引等数据。
+
+```sql
+# MySQL 默认安装目录为 /var/lib/mysql
+
+# 公司中的：/usr/local/mysql/
+```
+
+![image-20230315214616939](./assets/image-20230315214616939.png)
+
+段：分为数据段（Leaf node segment），索引段（Non-leaf node segment），回滚段（Rellback segment），InnoDB是索引组织表，数据段就是B+树的非叶子节点。段用来管理多个Extent（区）。
+
+区：表空间的单元结构，每个区大小为1M，默认情况下，InnoDB存储引擎页大小是16k，即一个区中一共有64个连续的页。
+
+页：是InnoDB 存储引擎磁盘管理的最小单元，每个页的大小默认为16kb。为保证页的连续性，InnoDB 存储引擎每次从磁盘中申请4-5个区。
+
+行：InnoDB 存储引擎数据是按行进行存放的
+
+​	Trx_id：每次对某条记录进行改动是，都会把对应的事务id赋值给rtx_id隐藏列。
+
+​	Roll_pointer：每次对某条索引记录进行改动时，都会把旧的版本写入到undo日志中，然后这个隐藏列就相当于一个指针，可以通过他来找到该记录修改前的信息。
+
+### 架构：
+
+​	MySQL5.5版本开始，默认使用InnoDB 存储引擎，它擅长事务处理，具有崩溃恢复特性，在日常开发中使用广泛。InnoDB 架构图，左侧为内存架构，右侧为磁盘结构。
+
+![image-20230315214853840](./assets/image-20230315214853840.png)
+
+#### 架构-内存结构：
+
+![image-20230315214915214](./assets/image-20230315214915214.png)
+
+ 	Buffer Pool：缓冲池是主内存中的一个区域，里面可以缓存磁盘上经常操作的真实数据，在执行增删改查操作时，先操作缓冲池中的数据（若缓冲池没有数据，则从磁盘加载并缓存），然后再以一定频率刷新到磁盘，从而减少磁盘IO，加快处理速度。
+
+​	缓冲池以Page页为单位，底层采用链表数据结构管理Page。根据状态，将Page分为三种类型：
+
+1.  free page：空闲page，未被使用
+2.  clean page：被使用page，数据没有修改过
+3.  dirty page：脏页，被使用page，数据被修改过，缓冲池中数据与磁盘的数据产生了不一致。
+
+​	Change Buffer（8.0以后版本存在，5.0的版本：插入缓冲区（Insert Buffer））：更改缓冲区（针对与非唯一二级索引页），在执行DML语句时，如果这些数据Page没有在Buffer Pool中，不会直接操作磁盘，而会将数据变更存在更改缓冲区Change Buffer中。在未来数据被读取时，再将数据合并恢复到Buffer Pool中，再将合并后的数据刷新到磁盘中。
+
+​	$\textcolor{red}{Change Buffer的意义是什么？}$
+
+​		与聚集索引不同，二级索引通常是唯一的，并且以相对随机的顺序插入二级索引。同样，删除和更新可能会影响索引树中不相邻的二级索引页，如果每一次都操作磁盘，会造成大量的磁盘IO。有了ChangeBuffer之后，我们可以在缓冲池中进行合并处理，减少磁盘IO。
+
+![image-20230315215315020](./assets/image-20230315215315020.png)
+
+​	Adaptive Hash Index：自适应hash 索引，用于优化Buffer Pool数据的查询，InnoDB存储引擎会监控对表上各个索引页查询，如果观察到Hash索引可以提升速度，则建立hash索引，称之为自适应Hash索引。
+
+​	$\textcolor{red}{自适应哈希索引，无需人工干预，是系统根据情况自动完成。}$
+
+​	参数：adaptive_hash_index
+
+```sql
+# 查询自适应哈希是否开启
+
+SHOW VARIABLES LIKE '%hash_index%';
+```
+
+​		Log Buffer：日志缓冲区，用来保存要写入到磁盘中的log日志数据（redo  log，undo log），默认大小为16MB，日志缓冲区的日志定期刷新到磁盘中。如果需要更新，插入或者删除许多行的事务，增加日志缓冲区的大小可以节省磁盘I/O。
