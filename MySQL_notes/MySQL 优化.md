@@ -2788,3 +2788,330 @@ SHOW VARIABLES LIKE '%hash_index%';
 ```
 
 ​		Log Buffer：日志缓冲区，用来保存要写入到磁盘中的log日志数据（redo  log，undo log），默认大小为16MB，日志缓冲区的日志定期刷新到磁盘中。如果需要更新，插入或者删除许多行的事务，增加日志缓冲区的大小可以节省磁盘I/O。
+
+​	innodb_log_buffer_size：缓冲区大小
+
+​	innodb_flush_log_at_trx_commit：日志刷新到磁盘时机
+
+​	1：日志在每次事务提交时写入并刷新到磁盘
+
+​	0：每秒将日志写入并刷新到磁盘一次
+
+​	2：日志在每次事务提交后写入，并每秒刷新到磁盘一次
+
+```sql
+#  查看日志缓冲区大小 
+SHOW VARIABLES LIKE '%log_buffer_size%';
+
+# 查看日志刷新磁盘时机
+SHOW VARIABLES LIKE '%flush_log%';
+```
+
+#### 架构-磁盘结构：
+
+![image-20230316095739447](./assets/image-20230316095739447.png)
+
+​	System Tablespace：系统表空间是更改缓冲区的存储区域。如果表是在系统表空间而不是每个表文件或通用表空间中创建的，他可能包含表和索引数据（在MySQL5.x版本中还包含InnoDB数据字典，undolog等）
+
+参数：innodb_data_file_path
+
+```sql
+# 查询参数
+SHOW VARIABLES LIKE '%data_file_path%';
+```
+
+​	File-Per-Table  Tablespaces：每个表的文件表空间包含单个InnoDB表的数据和索引，并存储在文件系统上的当个数据文件中（默认开关为开启，代表每一张表都会生成一个独立的表空间文件）。
+
+​	参数：innodb_file_per_table
+
+```sql
+# 查看开关
+SHOW VARIABLES LIKE '%file_per_table%';
+```
+
+​	General Tablespaces：通用表空间，需要通过CREATE TABLESPANCE 语法创建通用表空间，在创建表时，可以指定该表空间（不会自动创建）。
+
+```sql
+# 创建表空间文件 xxx 表空间名称 file_name 关联表空间名称  engine_name 存储引擎
+
+CREATE TABLESPACE xxx ADD DATAFILE 'file_name' ENGINE = engine_name;
+
+#  创建表时 指定表空间  ts_name 指定表空间名称
+CREATE TABLE table_name ... TABLESPACE ts_name;
+```
+
+​	Undo Tablespaces：撤销表空间，MySQL实例在初始化时会自动创建两个默认的undo表空间（初始大小16M），用于存储undo log日志。
+
+​	Temporary Tablespaces：InnoDB使用会话临时表空间和全局临时表空间。存储用户创建的临时表等数据。
+
+​	Doublewrite Buffer Files：双写缓冲区。InnoDB引擎将数据页从Buffer Pool 刷新到磁盘前，先将数据页写入到双写缓冲区文件中，便于系统异常时恢复数据。
+
+​	\#ib_16384_0.dblwr
+
+​	\#ib_16384_1.dblwr
+
+​	Redo Log：重做日志，是用来实现事务的持久性。该日志文件由两部分组成：重做日志缓冲（redo log Buffer）以及重做日志文件（redo log），前者是在内存中，后者在磁盘中。当事务提交之后把所有修改信息都会保存到该日志中，用于刷新脏页到磁盘时，发生错误时，进行数据恢复使用。
+
+​	以循环方式写入重做日志文件，涉及两个文件：ib_logfile0  和 ib_logfile1
+
+#### 架构-后台线程
+
+![image-20230316100322445](./assets/image-20230316100322445.png)
+
+1.  Master Thread
+
+    1.  核心后台线程，负责调度其他线程，还负责将缓冲池中的数据异步刷新到磁盘中，保持数据的一致性，还包括脏页的刷新，合并插入缓存，undo页回收。
+
+2.  Io Thread
+
+    1.  在InnoDB存储引擎中大量使用了AIO（非阻塞）来处理IO请求，这样可以极大的提高数据库的性能，而IO Thread 主要负责这些IO 请求的回调。
+
+    | 线程类型             | 默认个数 | 职责                           |
+    | -------------------- | -------- | ------------------------------ |
+    | Read Thread          | 4        | 负责读操作                     |
+    | Write Thread         | 4        | 负责写操作                     |
+    | Log Thread           | 1        | 负责将日志缓冲区刷新到磁盘     |
+    | Insert Buffer Thread | 1        | 负责将写缓冲区内容刷新到此磁盘 |
+
+    ```sql
+    # 查看InnoDB 引擎状态信息
+    
+    SHOW ENGINE innodb status;
+    ```
+
+3.  Purge Thread
+
+    1.  主要用于事务已经提交了的undo Log ，在事务提交之后，undo Log 可能不用了，就用来回收。
+
+4.  Page Cleaner Thread
+
+    1.  协助Master Thread 刷新脏页到磁盘的线程，它可以减轻Master Thread 的工作压力，减少阻塞。
+
+## 事务的原理
+
+事务是一组操作的集合，他是一个不可分割的工作单位，事务会把所有的操作作为一个整体一起向系统提交或撤销操作请求，即这些操作要么同时成功，要么同时失败。
+
+特性：
+
+​	原子性（Atomicity）：事务是不可分割的最小操作单元，要么全部成功，要么全部失败
+
+​	一致性（Consistency）：事务完成时，必须使用所有的数据都保持一致状态
+
+​	隔离性（Isolation）：数据库系统提供的隔离机制，保证事务在不受外部并发操作影响的独立环境下运行。
+
+​	持久性（Durability）：事务一旦提交或回滚，他对数据库中的数据的改变就是永久的。	
+
+![image-20230316101207273](./assets/image-20230316101207273.png)
+
+redo log  （持久性）
+
+​	重做日志，记录的是事务提交时数据页的物理修改，是用来实现事务的持久性。
+
+​	该日志文件是由两部分组成：重做日志缓冲（redo log buffer）以及重做日志文件（redo log file），前者是在内存中，后者在磁盘中。当事务提交之后会把所有修改信息都存到该日志文件中，用于在刷新脏页到磁盘，发生错误时，进行数据恢复使用。
+
+​	没有 redo log时（出现事务提交，在数据从缓冲池刷新到磁盘中是出现错误）
+
+![image-20230316101311687](./assets/image-20230316101311687.png)
+
+​	有redo log时（会从缓冲池中把数据加载到 redo log中 然后 提交时Redo log 会将数据页的变化永久刷新到磁盘中）
+
+​		问什么要使用redo log 不直接进行刷入到磁盘中？
+
+​			1.如果将缓冲池的数据直接刷新到磁盘中时，会有严重的性能问题，因为在事务提交时会操作很多条记录，这些记录都是随机的操作数据页，就会涉及到大量的随机磁盘IO，性能是比较低的
+
+​			2.使用redo log时不会将脏页直接刷新到磁盘中，先将脏页的数据刷新到redo log日志中，redo log 日志会异步的将日志数据刷新到磁盘中，由于日志都是追加，此时就是顺序磁盘IO 性能高于随机磁盘IO
+
+​			3.到时间 缓冲池将脏页刷入到磁盘中，顺利时就不需要日志 就会定时去删除日志，所以两份日志不会永久存入而是循环使用
+
+这种机制叫做$\textcolor{red}{WAL（Write-Ahead Logging）}$
+
+![image-20230316101528068](./assets/image-20230316101528068.png)
+
+​	undo log（原子性）
+
+​	回滚日志，用于记录数据被修改前的信息，作用包含两个：提供回滚 和 MVCC（多版本并发控制）。
+
+​	undo log 和 redo log 记录物理日志不一样，它是逻辑日志。可以认为当delete一条记录时，undo log 中会记录一条相对应的insert记录，反之亦然，当update一条记录时，它记录一条对应相反的update记录。当执行rollback时，它可以从undo log 中的逻辑记录读取到相对应的内容并进行回滚。
+
+​	undo log 销毁：undo log在事务执行时产生，事务提交时，并不会立即删除undo log，因为这些日志可能还用于MVCC。
+
+​	undo log 存储：undo log采用段的方式进行管理和记录，存放在前面介绍的rollback segment 回滚段中，内部包含1024个undo log segment。
+
+#### MVCC-基本概念
+
+当前读：
+
+​	读取的是记录的最新版本，读取时还要保证其他并发事务不能修改当前记录，会对读取的记录进行加锁。对于日常的操作：如：select ... lock in sheare mode（共享锁），select ....for update，update，insert，delete（排他锁）都是一种当前读。
+
+客户端1进行查询   客户端2进行修改  修改之后提交事务   客户端1还是无法看到最新数据（当前隔离级别为可重复读）
+
+![image-20230316101811424](./assets/image-20230316101811424.png)
+
+使用 lock in sheare mode 开启当前读   读取最新数据
+
+![image-20230316101821591](./assets/image-20230316101821591.png)
+
+快照读：
+
+​	简单的SELECT（不加锁）就是快照读，快照读，读取的是记录数据的可见版本，有可能是历史数据，不加锁，是非阻塞读。
+
+-   Read Committed：每次 SELECT ，都生成一个快照读。
+-   Repeatable Read：开启事务后第一个 SELECT 语句才是快照读的地方。
+-   Serializable：快照都会退化当前读。
+
+![image-20230316101942361](./assets/image-20230316101942361.png)
+
+##### MVCC：
+
+全称 Multi-Version Concurrency Control，多版本并发控制。维护一个数据的多个版本，使得读写操作没有冲突，快照读为MySQL实现MVCC提供了一个非阻塞读功能。MVCC的具体实现，还需要以来于数据库中的三个隐式字段，undo log日志，readView。
+
+MVCC-实现原理：
+
+​	记录中的隐藏字段
+
+![image-20230316102104572](./assets/image-20230316102104572.png)
+
+| 隐藏字段    | 含义                                                         |
+| ----------- | ------------------------------------------------------------ |
+| DB_TRX_ID   | 最近修改事务ID，记录插入这条记录或最后一次修改该记录的事务ID。 |
+| DB_ROLL_PTR | 回滚指针，指向这条记录的上一个版本，用于配合undo log，指向上一个版本 |
+| DB_ROW_ID   | 隐藏主键，如果表结构没有执行主键，将会生成该隐藏字段         |
+
+使用命令查看MySQL ibd 文件：
+
+```sql
+ibd2sdi table_name.ibd
+```
+
+##### undo log
+
+​	回滚日志，在insert，update，delete的时候产生的便于数据回滚的日志。
+
+​	当insert的时候，产生的undo log日志只在回滚的时需要，在事务提交后，可立即删除。
+
+​	而update，delete的时候，产生的undo log 日志不仅在回滚时需要，在快照读时也需要，不会立即被删除。
+
+###### 	undo log 版本链：
+
+$\textcolor{red}{不同事务或相同事务对同一条记录进行修改，会导致该记录的undo log 形成一条记录版本链表，链表的头部是最新的旧记录，链表}$$\textcolor{red}{的尾部是最早的旧纪录}$
+
+在事务2进行修改数据之前 InnoDB 数据引擎会将当前表的数据记录在 undo log 日志中，会将记录进行更新，数据更新，此时空的回滚指针（DB_ROLL_PTR）就是当前undo log日志，当前事务id就是改编为操作这条记录的事务id  2
+
+事务3进行修改数据之前 InnoDB 数据引擎会将当前表的数据记录在 undo log 日志中，数据更新，此时0x00001回滚指针（DB_ROLL_PTR）会变为0X00002，当前事务id就是操作这条数据的事务id 3 （不会立即删除 undo log 日志  因为有活动事务正在操作这条数据）
+
+事务4进行修改数据之前 InnoDB 数据引擎会将当前表的数据记录在 undo log日志中，数据进行更新，此时0X00002回滚指针（DB_ROLL_PTR）会更改为0X0003 undo log日志 ，事务ID（DB_RTX_ID）将会更改为4  
+
+![image-20230316102606034](./assets/image-20230316102606034.png)
+
+#### ReadView
+
+ReadView（读视图）是快照读 SQL执行时MVCC提取数据的依据，记录并维护系统当前活跃的事务（未提交的）id。
+
+ReadView中包含了四个核心字段：
+
+| 字段           | 含义                                                 |
+| -------------- | ---------------------------------------------------- |
+| m_ids          | 当前活跃的事务ID集合                                 |
+| min_trx_id     | 最小活跃事务ID                                       |
+| max_trx_id     | 预分配事务ID，当前最大事务ID+1（因为事务ID是自增的） |
+| creator_trx_id | ReadView创建者事务ID                                 |
+
+读取规则：
+
+![image-20230316102855172](./assets/image-20230316102855172.png)
+
+$\textcolor{red}{不同的隔离级别，生成ReadView的时机不同：}$
+
+-   $\textcolor{red}{READ COMMITTED：在事务中每一次执行快照读时生成ReadView}$
+-   $\textcolor{red}{REPEATABLE READ：仅在事务中第一次执行快照读时生成ReadView，后续复用该ReadView}$
+
+RC（READ COMMITTED）隔离级别下，在事务每一次执行快照读时生成ReadView。
+
+![image-20230316103030811](./assets/image-20230316103030811.png)
+
+RR（REPEATABLE READ）隔离级别下，仅在事务中第一次执行快照读时生成ReadView，后续复用该ReadView 
+
+![image-20230316103040662](./assets/image-20230316103040662.png)
+
+#### MVCC-实现原理
+
+![image-20230316103103265](./assets/image-20230316103103265.png)
+
+## MySQL 管理：
+
+### 	系统数据库：
+
+​	MySQL 数据库安装完毕之后，自带了以下四个数据库，具体作用如下：
+
+| 数据库             | 含义                                                         |
+| ------------------ | ------------------------------------------------------------ |
+| mysql              | 存储MySQL服务器正常运行所需要的各种信息（时区，主从，用户，权限等） |
+| information_schema | 提供了访问数据库元数据的各种表和视图，包含数据库，表，字段类型及访问权限等 |
+| performance_schema | 为MySQL服务器运行时状态提供了一个底层监控功能，主要用于手机数据库服务器性能参数 |
+| sys                | 包含了一系列方便DBA和开发人员利用 performance_schema 性能数据库进行性能调优和诊断的视图 |
+
+常用工具：
+
+​	mysql
+
+​		该mysql不是指mysql服务，而是指mysql的客户端工具
+
+![image-20230316103323796](./assets/image-20230316103323796.png)
+
+-e选项可以在MySQL 客户端执行SQL 语句，而不用连接到MySQL 数据库在执行，对于一些批次处理脚本，这种方式尤其方便。
+
+```sql
+#示例：
+ mysql -h192.168.0.1 -P3306 -uroot -p123456 dataBase -e "select * from stu"
+
+#示例：
+    mysql -uroot -p123456 db01 -e "select * from stu"
+```
+
+​	mysqadmin
+
+​		mysqladmin是一个执行管理操作的客户端程序。可以用它来检查服务器的配置和当前状态，创建并删除数据库等。
+
+```sql
+# 通过帮助文档查看选项
+    mysqladmin --help
+```
+
+​	mysqlbinlog
+
+​		由于服务器生成的二进制日志文件以二进制格式保存，所以想要检查这些文本的文本格式，就会使用到mysqlbinlog日志管理工具。
+
+![image-20230316103427239](./assets/image-20230316103427239.png)
+
+```sql
+#示例：
+ mysqlbinlog mysql-bin.000008
+ mysqlbinlog -s mysql-bin.000008
+```
+
+​	mysqlshow
+
+​		mysqlshow客户端对象查找工具，用来很快的查找存在哪些数据库，数据库中的表，表中的列或者索引。
+
+![image-20230316103458475](./assets/image-20230316103458475.png)
+
+​	mysqldump
+
+​		mysqldump 客户端工具用来备份数据库或在不同的数据库之间进行数据迁移。备份内容包含创建表，及插入表的SQL语句。
+
+![image-20230316103513058](./assets/image-20230316103513058.png)
+
+```sql
+#查看MySQL 信任目录
+SHOW VARIABLES LIKE '%secure_file_priv%';
+```
+
+​	mysqlimport / source
+
+​		mysqlimport 是客户端数据导入工具，用来导入mysqldump  加 -T 参数后导出来的文本文件
+
+![image-20230316103538203](./assets/image-20230316103538203.png)
+
+​	如果需要导入sql文件，可以使用mysql中的source指令
+
+![image-20230316103550788](./assets/image-20230316103550788.png)
