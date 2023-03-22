@@ -68,3 +68,78 @@ sudo systemctl restart docker
 
 ## Docker命令：
 
+### 	操作服务命令：
+
+​	启动Docker服务：
+
+```shell
+systemctl start docker 
+```
+
+​	停止Docker服务：
+
+```shell
+systemctl stop docker 
+```
+
+​	重启Docker服务：
+
+```shell
+systemctl restart docker 
+```
+
+​	查看Docker服务状态：
+
+```shell
+systemctl status docker 
+```
+
+​	开机自启动Docker服务：
+
+```shell
+systemctl enable docker 
+```
+
+### 操作镜像命令：
+
+查看镜像：
+
+```dockerfile
+docker images
+```
+
+搜索镜像：
+
+```dockerfile
+docker search 文件名称
+
+#例子
+docker search Redis
+```
+
+拉取镜像：
+
+https://hub.docker.com/  官方镜像网址
+
+```dockerfile
+#不写版本号  拉去的为最新的
+docker pull 文件名称[:版本号]
+
+#例子
+docker pull Redis
+#或
+docker pull Redis:3.0
+```
+
+删除镜像：
+
+```dockerfile
+docker rmi [IMAGE ID]
+#或
+docker rmi 名称:版本
+
+# 删除所有镜像
+docker rmi `docker images -q`
+```
+
+### 容器操作命令：
