@@ -143,3 +143,78 @@ docker rmi `docker images -q`
 ```
 
 ### 容器操作命令：
+
+查看容器：
+
+```shell
+docker ps  #查看正在运行
+# 或
+docker ps -a  #查看所有
+```
+
+创建容器：
+
+​	参数说明：
+
+1.   -i：保持容器运行，通常与 -t 同时使用，加入 it 这两个参数后，容器创建后自动进入容器中，退出容器后，容器自动关闭
+2.  -t：为容器重新分配一个伪输入终端，通常与 -i 同时使用
+3.  -d：以守护（后天）模式运行容器。创建一个容器后台运行，需要使用docker exec进入容器。退出后，容器不会关闭
+4.  -it ：创建容器一般称为交互式容器， -id 创建的容器一般称为守护式容器
+5.  -- name ：为创建容器命名
+
+```shell
+docker run -it --name=[自定义] [服务名称][版本] [进入容器初始化命令]
+
+# 例子
+docker run -it --name=cl centos:7 /bin/bash
+
+#通过 it 创建的容器创建好会立马进入容器
+
+#退出
+exit
+
+#通过 it创建的容器 使用exit 退出 会关闭进程
+
+###############################################################################
+# 第二种
+# t  创建终端   d为后台运行
+docker run -id --name=[自定义名称]  [服务名称]:[版本号]
+```
+
+进入容器：
+
+```shell
+docker exec -it [docker创建时自定义的名称] [进入初始化命令  /bin/bash]
+```
+
+启动容器：
+
+```shell
+docker start [创建docker自定义名称]
+```
+
+停止容器：
+
+```shell
+docker stop [创建docker自定义名称]
+```
+
+删除容器：
+
+```shell
+docker rm [CONTATNER ID]
+#或
+docker rm [创建docker自定义名称]
+#或
+docker rm `docker ps -aq` # 删除所有docker容器
+```
+
+查看容器信息：
+
+```shell
+docker inspect [CONTATNER ID]
+#或
+docker inspect [创建docker自定义名称]
+```
+
+## Docker容器的数据卷：
