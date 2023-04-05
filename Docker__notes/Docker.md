@@ -218,3 +218,142 @@ docker inspect [创建docker自定义名称]
 ```
 
 ## Docker容器的数据卷：
+
+### 	数据卷概念：
+
+​		思考：
+
+-   Docker容器删除之后，在容器中产生的数据也会随之销毁
+
+    ![image-20230325124410034](./assets/image-20230325124410034.png)
+
+-   Docker容器和外部机器可以直接交换文件吗？（不能）
+
+    ![image-20230325124609121](./assets/image-20230325124609121.png)
+
+-   容器之间想要进行数据交互？
+
+![image-20230325124714822](./assets/image-20230325124714822.png)
+
+#### 数据卷：
+
+-   ​	数据卷是宿主机中的一个目录或文件
+-   当容器目录和数据卷目录绑定之后，对方修改会立即同步
+-   一个数据卷可以被多个容器挂载
+-   一个容器也可以挂载多个数据卷
+
+![image-20230325125148212](./assets/image-20230325125148212.png)
+
+#### 数据卷的作用：
+
+-   容器数据持久化
+-   外部机器和容器之间的通信
+-   容器之间数据交互
+
+### 配置数据卷：
+
+-   创建容器时，使用-v参数设置数据卷
+
+    ```shell
+    docker run ... -v 宿主机目录（文件）：容器内目录（文件）
+    ```
+
+-   注意事项
+
+    -   目录必须是绝对路径
+    -   如果目录不存在，会自动创建
+    -   可以挂载多个数据卷
+
+### 数据卷容器：
+
+​	多容器进行数据交换：
+
+1.  多个容器挂载同一个数据卷（比较麻烦）
+2.  数据卷容器
+
+![image-20230326135607196](./assets/image-20230326135607196.png)
+
+#### 配置数据卷容器：
+
+1.  创建启动数据卷容器，使用-v参数设置数据卷
+
+    ```shell
+    docker run -it --name=c3 -v /volume centos:7 /bin/bash
+    ```
+
+2.  创建启动容器，使用--volumes-from参数  设置数据卷
+
+    ```shell
+    docker run -it --name=c1 --volumes-from c3 centos:7 /bin/bash
+    docker run -it --name=c2 --volumes-from c3 centos:7 /bin/bash
+    ```
+
+    
+
+## Docker应用部署：
+
+### MySQL部署：
+
+​	实现步骤：
+
+1.  搜索MySQL镜像
+
+    ```shell
+    docker search mysql
+    ```
+
+2.  拉去MySQL镜像
+
+    ```shell
+    docker pull mysql:8.0
+    ```
+
+3.  创建容器
+
+    ```shell
+    #在/root目录下创建MySQL目录用于存储MySQL数据信息
+    mkdir /root/mysql
+    cd /root/mysql
+    
+    
+    docker run -id \
+    -p 3307:3306 \
+    --name=c_mysql \
+    -v $PWD/conf:/etc/mysql/conf.d \
+    -v $PWD/logs:/log \
+    -v $PWD/data:/var/lib/mysql \
+    -e MYSQL_ROOT_PASSWORD=123456 \
+    mysql:8.0
+    ```
+
+    参数说明：
+
+    -   -p 3307:3306 ：将容器的3306端口映射到宿主机的3307端口
+    -   -v $PWD/conf:/etc/mysql/conf.d：将主机当前目录下的conf/my.cnf挂载到容器的/etc/mysql/my.cnf。配置目录
+    -   -v $PWD/logs:/log ：将主机当前目录下的 logs 目录挂载到容器的 /logs。日志目录
+    -   -v $PWD/data:/var/lib/mysql：将主机当前目录下的data目录挂载到容器的/var/lib/mysql。数据目录
+    -   -e MYSQL_ROOT_PASSWORD=123456：初始化root用户密码
+
+4.  操作容器中的MySQL
+
+    ```shell
+    docker exec -it d_mysql /bin/bash
+    
+    mysql -uroot -p
+    ```
+
+​	操作注意：
+
+-   容器内的网络服务和外部机器不能直接通信
+-   外部机器和宿主机可以直接通信
+-   宿主机和容器可以直接通信
+-   当容器中的网络服务需要被外部机器访问时，可以将容器提供的端口映射到宿主机端口上。外部机器访问宿主机的该端口，从而间接访问容器内的服务。
+-   这种操作称为：端口映射
+
+![image-20230326160739625](./assets/image-20230326160739625.png)
+
+### Tomcat部署：
+
+### Nginx部署：
+
+### Redis部署：
